@@ -1,0 +1,577 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// Modèles extraits du backend principal nécessaires pour les métriques
+model Company {
+    company_id     String           @id @default(uuid())
+    name           String           @db.VarChar(100)
+    siret          String           @unique @db.VarChar(14)
+    tva_intra      String?          @db.VarChar(13)
+    tva_applicable Boolean
+    RCS_number     String           @db.VarChar(100)
+    RCS_city       String           @db.VarChar(100)
+    capital        Decimal?         @db.Decimal(10, 2)
+    siren          String           @unique @db.VarChar(9)
+    legal_form     LegalForm
+    address        String           @db.VarChar(255)
+    postal_code    String           @db.VarChar(10)
+    city           String           @db.VarChar(100)
+    country        String           @default("France") @db.VarChar(100)
+    email          String?          @db.VarChar(100)
+    phone          String?          @db.VarChar(20)
+    website        String?          @db.VarChar(255)
+    createdAt      DateTime         @default(now()) @map("createdAt")
+    updatedAt      DateTime         @updatedAt @map("updatedAt")
+    customers      Customer[]
+    invoices       Invoice[]
+    products       Product[]
+    quotes         Quote[]
+    users          User[]
+    metrics        CompanyMetrics[]
+    kpis           KPISnapshot[]
+    reports        Report[]
+}
+
+model User {
+    id                   String            @id
+    name                 String
+    email                String            @unique
+    emailVerified        Boolean
+    image                String?
+    createdAt            DateTime
+    updatedAt            DateTime
+    companyCompany_id    String?
+    first_name           String            @db.VarChar(50)
+    last_name            String            @db.VarChar(50)
+    company_id           String?
+    onboarding_completed Boolean           @default(false)
+    onboarding_step      OnboardingStep    @default(CHOOSING_COMPANY)
+    stripe_account_id    String?
+    stripe_onboarded     Boolean           @default(false)
+    Customer             Customer[]
+    Invoice              Invoice[]
+    Quote                Quote[]
+    Company              Company?          @relation(fields: [companyCompany_id], references: [company_id])
+    userMetrics          UserMetrics[]
+    activityLogs         UserActivityLog[]
+
+    @@map("user")
+}
+
+model Customer {
+    customer_id     String              @id @default(uuid())
+    user_id         String
+    company_id      String
+    type            CustomerType        @default(individual)
+    email           String?             @db.VarChar(100)
+    phone           String?             @db.VarChar(20)
+    address         String?             @db.VarChar(100)
+    city            String?             @db.VarChar(50)
+    postal_code     String?             @db.VarChar(20)
+    country         String              @default("France") @db.VarChar(50)
+    createdAt       DateTime            @default(now()) @map("createdAt")
+    updatedAt       DateTime            @updatedAt @map("updatedAt")
+    business        BusinessCustomer?
+    company         Company             @relation(fields: [company_id], references: [company_id], onDelete: Cascade)
+    user            User                @relation(fields: [user_id], references: [id], onDelete: Cascade)
+    individual      IndividualCustomer?
+    invoices        Invoice[]
+    quotes          Quote[]
+    customerMetrics CustomerMetrics[]
+}
+
+model BusinessCustomer {
+    customer_id    String   @id @unique
+    name           String   @db.VarChar(100)
+    siret          String   @db.VarChar(14)
+    siren          String   @db.VarChar(9)
+    tva_intra      String?  @db.VarChar(13)
+    tva_applicable Boolean
+    customer       Customer @relation(fields: [customer_id], references: [customer_id], onDelete: Cascade)
+}
+
+model IndividualCustomer {
+    customer_id String   @id @unique
+    first_name  String   @db.VarChar(50)
+    last_name   String   @db.VarChar(50)
+    customer    Customer @relation(fields: [customer_id], references: [customer_id], onDelete: Cascade)
+}
+
+model Product {
+    product_id          String           @id @default(uuid())
+    company_id          String
+    name                String           @db.VarChar(100)
+    description         String?
+    price_excluding_tax Decimal          @db.Decimal(10, 2)
+    vat_rate            VatRate          @default(ZERO)
+    unit                ProductUnit      @default(unite)
+    createdAt           DateTime         @default(now()) @map("createdAt")
+    updatedAt           DateTime         @updatedAt @map("updatedAt")
+    invoice_items       InvoiceItem[]
+    company             Company          @relation(fields: [company_id], references: [company_id], onDelete: Cascade)
+    quote_items         QuoteItem[]
+    productMetrics      ProductMetrics[]
+}
+
+model Invoice {
+    invoice_id           String        @id @default(uuid())
+    customer_id          String
+    user_id              String
+    company_id           String?
+    invoice_number       String        @unique @db.VarChar(50)
+    invoice_date         DateTime      @db.Date
+    due_date             DateTime      @db.Date
+    amount_excluding_tax Decimal       @db.Decimal(10, 2)
+    tax                  Decimal       @db.Decimal(10, 2)
+    amount_including_tax Decimal       @db.Decimal(10, 2)
+    status               InvoiceStatus
+    conditions           String?       @db.VarChar(1000)
+    late_payment_penalty String?
+    createdAt            DateTime      @default(now()) @map("createdAt")
+    updatedAt            DateTime      @updatedAt @map("updatedAt")
+    company              Company?      @relation(fields: [company_id], references: [company_id], onDelete: Cascade)
+    customer             Customer      @relation(fields: [customer_id], references: [customer_id], onDelete: Cascade)
+    user                 User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+    items                InvoiceItem[]
+    payments             Payment[]
+}
+
+model InvoiceItem {
+    item_id                  String      @id @default(uuid())
+    invoice_id               String
+    product_id               String?
+    name                     String?     @db.VarChar(100)
+    description              String?
+    quantity                 Decimal     @db.Decimal(10, 2)
+    unit                     ProductUnit @default(unite)
+    unit_price_excluding_tax Decimal     @db.Decimal(10, 2)
+    vat_rate                 VatRate     @default(ZERO)
+    invoice                  Invoice     @relation(fields: [invoice_id], references: [invoice_id], onDelete: Cascade)
+    product                  Product?    @relation(fields: [product_id], references: [product_id])
+}
+
+model Payment {
+    payment_id     String        @id @default(uuid())
+    invoice_id     String
+    payment_date   DateTime
+    amount         Decimal       @db.Decimal(10, 2)
+    payment_method PaymentMethod
+    description    String?       @db.VarChar(500)
+    reference      String?       @db.VarChar(100)
+    createdAt      DateTime      @default(now()) @map("createdAt")
+    updatedAt      DateTime      @updatedAt @map("updatedAt")
+    invoice        Invoice       @relation(fields: [invoice_id], references: [invoice_id], onDelete: Cascade)
+}
+
+model Quote {
+    quote_id             String      @id @default(uuid())
+    customer_id          String
+    user_id              String
+    company_id           String?
+    quote_number         String      @unique @db.VarChar(50)
+    quote_date           DateTime    @db.Date
+    validity_date        DateTime    @db.Date
+    amount_excluding_tax Decimal     @db.Decimal(10, 2)
+    tax                  Decimal     @db.Decimal(10, 2)
+    amount_including_tax Decimal     @db.Decimal(10, 2)
+    status               QuoteStatus
+    conditions           String?     @db.VarChar(1000)
+    notes                String?
+    createdAt            DateTime    @default(now()) @map("createdAt")
+    updatedAt            DateTime    @updatedAt @map("updatedAt")
+    company              Company?    @relation(fields: [company_id], references: [company_id], onDelete: Cascade)
+    customer             Customer    @relation(fields: [customer_id], references: [customer_id], onDelete: Cascade)
+    user                 User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+    items                QuoteItem[]
+}
+
+model QuoteItem {
+    item_id                  String      @id @default(uuid())
+    quote_id                 String
+    product_id               String?
+    name                     String?     @db.VarChar(100)
+    description              String?
+    quantity                 Decimal     @db.Decimal(10, 2)
+    unit                     ProductUnit @default(unite)
+    unit_price_excluding_tax Decimal     @db.Decimal(10, 2)
+    vat_rate                 VatRate     @default(ZERO)
+    quote                    Quote       @relation(fields: [quote_id], references: [quote_id], onDelete: Cascade)
+    product                  Product?    @relation(fields: [product_id], references: [product_id])
+}
+
+// ===== NOUVEAUX MODÈLES POUR LES MÉTRIQUES =====
+
+// Métriques d'entreprise agrégées par période
+model CompanyMetrics {
+    id                     String     @id @default(uuid())
+    company_id             String
+    period_type            PeriodType // daily, weekly, monthly, yearly
+    period_start           DateTime   @db.Date
+    period_end             DateTime   @db.Date
+    total_revenue          Decimal    @db.Decimal(15, 2)
+    invoices_count         Int
+    quotes_count           Int
+    customers_count        Int
+    products_count         Int
+    avg_invoice_amount     Decimal    @db.Decimal(15, 2)
+    avg_quote_amount       Decimal    @db.Decimal(15, 2)
+    pending_invoices_count Int
+    paid_invoices_count    Int
+    overdue_invoices_count Int
+    quote_to_invoice_ratio Decimal    @db.Decimal(5, 4)
+    new_customers_count    Int
+    active_customers_count Int
+    conversion_rate        Decimal    @db.Decimal(5, 4)
+    average_payment_delay  Decimal?   @db.Decimal(8, 2) // en jours
+    createdAt              DateTime   @default(now())
+    updatedAt              DateTime   @updatedAt
+    company                Company    @relation(fields: [company_id], references: [company_id], onDelete: Cascade)
+
+    @@unique([company_id, period_type, period_start])
+    @@index([company_id, period_type])
+    @@index([period_start, period_end])
+}
+
+// KPIs snapshots pour tracking des performances clés
+model KPISnapshot {
+    id                      String   @id @default(uuid())
+    company_id              String
+    snapshot_date           DateTime @db.Date
+    monthly_revenue         Decimal  @db.Decimal(15, 2)
+    yearly_revenue          Decimal  @db.Decimal(15, 2)
+    mrr                     Decimal? @db.Decimal(15, 2) // Monthly Recurring Revenue
+    arr                     Decimal? @db.Decimal(15, 2) // Annual Recurring Revenue
+    churn_rate              Decimal? @db.Decimal(5, 4)
+    customer_lifetime_value Decimal? @db.Decimal(15, 2)
+    acquisition_cost        Decimal? @db.Decimal(15, 2)
+    profit_margin           Decimal? @db.Decimal(5, 4)
+    cash_flow               Decimal? @db.Decimal(15, 2)
+    growth_rate             Decimal? @db.Decimal(5, 4)
+    createdAt               DateTime @default(now())
+    company                 Company  @relation(fields: [company_id], references: [company_id], onDelete: Cascade)
+
+    @@unique([company_id, snapshot_date])
+    @@index([company_id])
+    @@index([snapshot_date])
+}
+
+// Métriques par utilisateur
+model UserMetrics {
+    id                 String    @id @default(uuid())
+    user_id            String
+    company_id         String
+    period_start       DateTime  @db.Date
+    period_end         DateTime  @db.Date
+    invoices_created   Int
+    quotes_created     Int
+    revenue_generated  Decimal   @db.Decimal(15, 2)
+    customers_acquired Int
+    login_count        Int
+    last_activity      DateTime?
+    productivity_score Decimal?  @db.Decimal(5, 2) // Note sur 100
+    createdAt          DateTime  @default(now())
+    updatedAt          DateTime  @updatedAt
+    user               User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+    @@unique([user_id, period_start, period_end])
+    @@index([user_id])
+    @@index([company_id])
+}
+
+// Métriques par client
+model CustomerMetrics {
+    id                    String    @id @default(uuid())
+    customer_id           String
+    company_id            String
+    period_start          DateTime  @db.Date
+    period_end            DateTime  @db.Date
+    total_invoiced        Decimal   @db.Decimal(15, 2)
+    total_paid            Decimal   @db.Decimal(15, 2)
+    invoices_count        Int
+    quotes_count          Int
+    average_payment_delay Decimal?  @db.Decimal(8, 2) // en jours
+    last_invoice_date     DateTime?
+    last_payment_date     DateTime?
+    lifetime_value        Decimal   @db.Decimal(15, 2)
+    acquisition_date      DateTime
+    churn_date            DateTime?
+    risk_score            Decimal?  @db.Decimal(5, 2) // Score de risque sur 100
+    createdAt             DateTime  @default(now())
+    updatedAt             DateTime  @updatedAt
+    customer              Customer  @relation(fields: [customer_id], references: [customer_id], onDelete: Cascade)
+
+    @@unique([customer_id, period_start, period_end])
+    @@index([customer_id])
+    @@index([company_id])
+}
+
+// Métriques par produit
+model ProductMetrics {
+    id                    String   @id @default(uuid())
+    product_id            String
+    company_id            String
+    period_start          DateTime @db.Date
+    period_end            DateTime @db.Date
+    quantity_sold         Decimal  @db.Decimal(15, 2)
+    revenue_generated     Decimal  @db.Decimal(15, 2)
+    times_quoted          Int
+    times_invoiced        Int
+    conversion_rate       Decimal  @db.Decimal(5, 4)
+    average_selling_price Decimal  @db.Decimal(15, 2)
+    createdAt             DateTime @default(now())
+    updatedAt             DateTime @updatedAt
+    product               Product  @relation(fields: [product_id], references: [product_id], onDelete: Cascade)
+
+    @@unique([product_id, period_start, period_end])
+    @@index([product_id])
+    @@index([company_id])
+}
+
+// Logs d'activité utilisateur pour analytics comportementales
+model UserActivityLog {
+    id          String         @id @default(uuid())
+    user_id     String
+    company_id  String?
+    action      ActivityAction
+    entity_type EntityType? // invoice, quote, customer, product
+    entity_id   String?
+    ip_address  String?
+    user_agent  String?
+    duration    Int? // durée en millisecondes
+    metadata    Json? // données additionnelles
+    timestamp   DateTime       @default(now())
+    user        User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+    @@index([user_id])
+    @@index([company_id])
+    @@index([action])
+    @@index([timestamp])
+}
+
+// Rapports générés et leurs métriques
+model Report {
+    id           String       @id @default(uuid())
+    company_id   String
+    name         String       @db.VarChar(255)
+    type         ReportType
+    period_start DateTime     @db.Date
+    period_end   DateTime     @db.Date
+    format       ReportFormat @default(JSON)
+    file_url     String? // URL du fichier généré
+    file_size    Int? // taille en bytes
+    status       ReportStatus @default(pending)
+    data         Json? // données du rapport si format JSON
+    generated_at DateTime?
+    requested_by String? // user_id qui a demandé le rapport
+    createdAt    DateTime     @default(now())
+    updatedAt    DateTime     @updatedAt
+    company      Company      @relation(fields: [company_id], references: [company_id], onDelete: Cascade)
+
+    @@index([company_id])
+    @@index([type])
+    @@index([status])
+    @@index([generated_at])
+}
+
+// Cache pour les métriques complexes
+model MetricsCache {
+    id         String   @id @default(uuid())
+    cache_key  String   @unique
+    data       Json
+    expires_at DateTime
+    createdAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+
+    @@index([cache_key])
+    @@index([expires_at])
+}
+
+// Configuration des alertes métriques
+model MetricAlert {
+    id                  String         @id @default(uuid())
+    company_id          String
+    name                String         @db.VarChar(255)
+    metric_type         MetricType
+    condition           AlertCondition // greater_than, less_than, equals, etc.
+    threshold_value     Decimal        @db.Decimal(15, 2)
+    is_active           Boolean        @default(true)
+    notification_emails String[] // emails à notifier
+    last_triggered      DateTime?
+    created_by          String // user_id
+    createdAt           DateTime       @default(now())
+    updatedAt           DateTime       @updatedAt
+
+    @@index([company_id])
+    @@index([is_active])
+}
+
+// ===== ENUMS =====
+
+enum OnboardingStep {
+    CHOOSING_COMPANY
+    STRIPE_SETUP
+    FINISH
+}
+
+enum LegalForm {
+    SAS
+    SARL
+    SA
+    SASU
+    EURL
+    SNC
+    SOCIETE_CIVILE
+    ENTREPRISE_INDIVIDUELLE
+}
+
+enum CustomerType {
+    individual
+    company
+}
+
+enum InvoiceStatus {
+    pending
+    sent
+    paid
+    cancelled
+    late
+}
+
+enum QuoteStatus {
+    draft
+    sent
+    accepted
+    rejected
+    expired
+}
+
+enum PaymentMethod {
+    cash
+    credit_card
+    bank_transfer
+    stripe
+}
+
+enum ProductUnit {
+    unite @map("unité")
+    kg
+    g
+    l
+    ml
+    m
+    cm
+    m2    @map("m²")
+    cm2   @map("cm²")
+    m3    @map("m³")
+    h
+    jour
+    mois
+    annee @map("année")
+}
+
+enum VatRate {
+    ZERO      @map("0.00")
+    REDUCED_1 @map("2.10")
+    REDUCED_2 @map("5.50")
+    REDUCED_3 @map("10.00")
+    STANDARD  @map("20.00")
+}
+
+// Nouveaux enums pour les métriques
+
+enum PeriodType {
+    daily
+    weekly
+    monthly
+    quarterly
+    yearly
+}
+
+enum ActivityAction {
+    login
+    logout
+    create_invoice
+    update_invoice
+    delete_invoice
+    send_invoice
+    pay_invoice
+    create_quote
+    update_quote
+    delete_quote
+    send_quote
+    accept_quote
+    reject_quote
+    create_customer
+    update_customer
+    delete_customer
+    create_product
+    update_product
+    delete_product
+    view_dashboard
+    export_data
+    generate_report
+}
+
+enum EntityType {
+    invoice
+    quote
+    customer
+    product
+    company
+    user
+    payment
+}
+
+enum ReportType {
+    revenue_report
+    customer_report
+    product_report
+    tax_report
+    payment_report
+    activity_report
+    kpi_dashboard
+    custom_report
+}
+
+enum ReportFormat {
+    JSON
+    CSV
+    PDF
+    XLSX
+}
+
+enum ReportStatus {
+    pending
+    processing
+    completed
+    failed
+    cancelled
+}
+
+enum MetricType {
+    revenue
+    invoice_count
+    quote_count
+    customer_count
+    conversion_rate
+    average_payment_delay
+    churn_rate
+    growth_rate
+}
+
+enum AlertCondition {
+    greater_than
+    less_than
+    equals
+    greater_than_or_equal
+    less_than_or_equal
+    not_equals
+    percentage_change_up
+    percentage_change_down
+}

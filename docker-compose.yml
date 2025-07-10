@@ -1,0 +1,203 @@
+version: "3.8"
+
+services:
+    # Microservice de métriques
+    metrics-app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        container_name: zenbilling-metrics
+        ports:
+            - "3003:3003"
+        environment:
+            - NODE_ENV=production
+            - PORT=3003
+            - DATABASE_URL=postgresql://metrics_user:metrics_password@metrics-db:5432/zenbilling_metrics
+            - REDIS_HOST=metrics-redis
+            - REDIS_PORT=6379
+            - REDIS_DB=0
+            - REDIS_QUEUE_DB=1
+            - SUPABASE_URL=${SUPABASE_URL}
+            - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+            - CORS_ORIGIN=http://localhost:3000,http://localhost:3001,http://localhost:3002
+        depends_on:
+            metrics-db:
+                condition: service_healthy
+            metrics-redis:
+                condition: service_healthy
+        networks:
+            - metrics-network
+        volumes:
+            - metrics-logs:/app/logs
+        restart: unless-stopped
+        healthcheck:
+            test:
+                [
+                    "CMD",
+                    "node",
+                    "-e",
+                    "const http = require('http'); const req = http.request({host: 'localhost', port: 3003, path: '/health'}, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.end();",
+                ]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 40s
+
+    # Base de données PostgreSQL pour les métriques
+    metrics-db:
+        image: postgres:15-alpine
+        container_name: zenbilling-metrics-db
+        ports:
+            - "5434:5432"
+        environment:
+            - POSTGRES_DB=zenbilling_metrics
+            - POSTGRES_USER=metrics_user
+            - POSTGRES_PASSWORD=metrics_password
+            - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+        volumes:
+            - metrics-postgres-data:/var/lib/postgresql/data
+            - ./init-scripts:/docker-entrypoint-initdb.d
+        networks:
+            - metrics-network
+        restart: unless-stopped
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -U metrics_user -d zenbilling_metrics",
+                ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
+        command:
+            - postgres
+            - -c
+            - max_connections=200
+            - -c
+            - shared_buffers=256MB
+            - -c
+            - effective_cache_size=1GB
+            - -c
+            - work_mem=4MB
+            - -c
+            - maintenance_work_mem=64MB
+
+    # Redis pour le cache et les files d'attente
+    metrics-redis:
+        image: redis:7-alpine
+        container_name: zenbilling-metrics-redis
+        ports:
+            - "6381:6379"
+        volumes:
+            - metrics-redis-data:/data
+            - ./redis.conf:/usr/local/etc/redis/redis.conf
+        networks:
+            - metrics-network
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 10s
+            timeout: 3s
+            retries: 5
+            start_period: 10s
+        command: redis-server /usr/local/etc/redis/redis.conf --appendonly yes
+
+    # PgAdmin pour l'administration de la base de données (optionnel)
+    metrics-pgadmin:
+        image: dpage/pgadmin4:latest
+        container_name: zenbilling-metrics-pgadmin
+        ports:
+            - "8084:80"
+        environment:
+            - PGADMIN_DEFAULT_EMAIL=admin@zenbilling.com
+            - PGADMIN_DEFAULT_PASSWORD=admin123
+            - PGADMIN_CONFIG_SERVER_MODE=False
+        volumes:
+            - metrics-pgadmin-data:/var/lib/pgadmin
+        networks:
+            - metrics-network
+        restart: unless-stopped
+        profiles:
+            - admin
+        depends_on:
+            - metrics-db
+
+    # Redis Commander pour l'administration de Redis (optionnel)
+    metrics-redis-commander:
+        image: rediscommander/redis-commander:latest
+        container_name: zenbilling-metrics-redis-commander
+        ports:
+            - "8083:8081"
+        environment:
+            - REDIS_HOSTS=local:metrics-redis:6379
+        networks:
+            - metrics-network
+        restart: unless-stopped
+        profiles:
+            - admin
+        depends_on:
+            - metrics-redis
+
+    # Service de monitoring Prometheus (optionnel)
+    metrics-prometheus:
+        image: prom/prometheus:latest
+        container_name: zenbilling-metrics-prometheus
+        ports:
+            - "9091:9090"
+        volumes:
+            - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+            - metrics-prometheus-data:/prometheus
+        networks:
+            - metrics-network
+        restart: unless-stopped
+        profiles:
+            - monitoring
+        command:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--web.console.libraries=/etc/prometheus/console_libraries"
+            - "--web.console.templates=/etc/prometheus/consoles"
+            - "--storage.tsdb.retention.time=200h"
+            - "--web.enable-lifecycle"
+
+    # Service Grafana pour les dashboards (optionnel)
+    metrics-grafana:
+        image: grafana/grafana:latest
+        container_name: zenbilling-metrics-grafana
+        ports:
+            - "3001:3000"
+        environment:
+            - GF_SECURITY_ADMIN_PASSWORD=admin123
+            - GF_USERS_ALLOW_SIGN_UP=false
+        volumes:
+            - metrics-grafana-data:/var/lib/grafana
+            - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+        networks:
+            - metrics-network
+        restart: unless-stopped
+        profiles:
+            - monitoring
+        depends_on:
+            - metrics-prometheus
+
+# Définition des volumes persistants
+volumes:
+    metrics-postgres-data:
+        driver: local
+    metrics-redis-data:
+        driver: local
+    metrics-logs:
+        driver: local
+    metrics-pgadmin-data:
+        driver: local
+    metrics-prometheus-data:
+        driver: local
+    metrics-grafana-data:
+        driver: local
+
+# Définition du réseau
+networks:
+    metrics-network:
+        driver: bridge
+        name: zenbilling-metrics-network
